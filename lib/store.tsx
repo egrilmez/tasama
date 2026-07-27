@@ -9,7 +9,14 @@ import {
   useRef,
   useState,
 } from "react";
-import { AGENTS, MODELS, SEED_FILES, type FileDef } from "./data";
+import {
+  AGENTS,
+  MODELS,
+  SEED_FILES,
+  staticRegistryAgents,
+  type FileDef,
+  type RegistryAgent,
+} from "./data";
 import { analyzeGoal, analysisToMarkdown, type SmartAnalysis } from "./smart";
 
 export interface SourceRef {
@@ -75,6 +82,8 @@ interface AppState {
   panelAgent: string | null;
   panelStatus: PanelStatus;
   panelAnalysis: SmartAnalysis | null;
+  /** Merged registry: static agents + this workspace's n8n agents. */
+  agents: RegistryAgent[];
 
   setModelId: (id: string) => void;
   setKbEnabled: (v: boolean) => void;
@@ -135,6 +144,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [panelAgent, setPanelAgent] = useState<string | null>(null);
   const [panelStatus, setPanelStatus] = useState<PanelStatus>("idle");
   const [panelAnalysis, setPanelAnalysis] = useState<SmartAnalysis | null>(null);
+  const [agents, setAgents] = useState<RegistryAgent[]>(staticRegistryAgents());
   const streamTimer = useRef<ReturnType<typeof setInterval> | null>(null);
 
   /* ---- identity ---- */
@@ -152,6 +162,23 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       })
       .catch(() => {});
   }, []);
+
+  /* ---- agent registry (static + workspace n8n agents) ----
+     Initial state already holds the static agents; when a workspace is active
+     we fetch the merged list and overlay it (async, so no sync setState). */
+  useEffect(() => {
+    if (!activeWorkspaceId) return;
+    let cancelled = false;
+    fetch(`/api/agents?workspaceId=${encodeURIComponent(activeWorkspaceId)}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((json) => {
+        if (!cancelled && json?.agents) setAgents(json.agents as RegistryAgent[]);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [activeWorkspaceId]);
 
   /* ---- per-user, per-workspace localStorage persistence ---- */
   const storageKey =
@@ -180,7 +207,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       // corrupt state — start fresh
     }
     // Legitimate hydration from localStorage during initialization
-    // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setChats(
       Array.isArray(s.chats)
         ? s.chats.map((c) => ({
@@ -273,13 +300,15 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     [patchMessage]
   );
 
-  /** Stream a reply from the ARIVA backend proxy. Returns false if unavailable. */
+  /** Stream a reply from the backend proxy (ARIVA, or an n8n agent when
+   *  agentId is set). Returns false if unavailable. */
   const tryAriva = useCallback(
     async (
       chatId: string,
       msgId: string,
       message: string,
-      conversationId?: string
+      conversationId?: string,
+      agentId?: string
     ): Promise<boolean> => {
       try {
         const res = await fetch("/api/chat", {
@@ -289,6 +318,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
             message,
             conversationId,
             workspaceId: activeWorkspaceId ?? undefined,
+            agentId,
           }),
         });
         if (!res.ok || !res.body) return false;
@@ -418,6 +448,9 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       );
       const chat = chats.find((c) => c.id === chatId);
       const isGoals = chat?.agentSlug === "goals-copilot";
+      const activeAgent = agents.find((a) => a.slug === chat?.agentSlug);
+      const n8nAgentId =
+        activeAgent?.backend === "n8n" ? activeAgent.id : undefined;
 
       const reply = isGoals
         ? analysisToMarkdown(analyzeGoal(text, panelAnalysis?.division ?? "D&T"))
@@ -431,12 +464,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
           startMock();
           return;
         }
-        // Real backend first (ARIVA RAG); mock demo reply if unconfigured.
-        void tryAriva(chatId, asstMsg.id, text, chat?.arivaConversationId).then(
-          (ok) => {
-            if (!ok) startMock();
-          }
-        );
+        // Real backend first (n8n agent when selected, else ARIVA RAG);
+        // mock demo reply if the backend is unavailable/unconfigured.
+        void tryAriva(
+          chatId,
+          asstMsg.id,
+          text,
+          chat?.arivaConversationId,
+          n8nAgentId
+        ).then((ok) => {
+          if (!ok) startMock();
+        });
       };
       if (asstMsg.status === "searching") {
         setTimeout(() => {
@@ -460,6 +498,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       attachedFileIds,
       kbEnabled,
       chats,
+      agents,
       panelAnalysis,
       patchMessage,
       streamInto,
@@ -467,26 +506,37 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     ]
   );
 
-  const runAgent = useCallback((slug: string) => {
-    const agent = AGENTS.find((a) => a.slug === slug);
-    if (!agent) return;
-    const id = uid();
-    const intro: Message = {
-      id: uid(),
-      role: "assistant",
-      content: agent.description,
-      agentSlug: slug,
-      status: "done",
-    };
-    setChats((cs) => [
-      { id, title: agent.name, agentSlug: slug, messages: [intro] },
-      ...cs,
-    ]);
-    setActiveChatId(id);
-    setPanelAgent(slug);
-    setPanelStatus("running");
-    setPanelAnalysis(null);
-  }, []);
+  const runAgent = useCallback(
+    (slug: string) => {
+      const agent = agents.find((a) => a.slug === slug);
+      if (!agent) return;
+      const id = uid();
+      const intro: Message = {
+        id: uid(),
+        role: "assistant",
+        content: agent.description,
+        agentSlug: slug,
+        status: "done",
+      };
+      setChats((cs) => [
+        { id, title: agent.name, agentSlug: slug, messages: [intro] },
+        ...cs,
+      ]);
+      setActiveTab("chats");
+      setActiveChatId(id);
+      // n8n agents run as a plain chat; the goal/UI side panel is for the
+      // built-in static agents only.
+      if (agent.backend === "n8n") {
+        setPanelAgent(null);
+        setPanelStatus("idle");
+      } else {
+        setPanelAgent(slug);
+        setPanelStatus("running");
+      }
+      setPanelAnalysis(null);
+    },
+    [agents]
+  );
 
   const submitGoal = useCallback(
     (division: string, goal: string) => {
@@ -550,6 +600,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       panelAgent,
       panelStatus,
       panelAnalysis,
+      agents,
       setModelId,
       setKbEnabled,
       setWebEnabled,
@@ -570,12 +621,14 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       detachFile: (id) => setAttachedFileIds((p) => p.filter((x) => x !== id)),
       uploadFiles,
       newChat: () => {
+        setActiveTab("chats");
         setActiveChatId(null);
         setPanelAgent(null);
         setPanelStatus("idle");
         setPanelAnalysis(null);
       },
       selectChat: (id) => {
+        setActiveTab("chats");
         setActiveChatId(id);
         const c = chats.find((x) => x.id === id);
         if (c?.agentSlug) {
@@ -614,6 +667,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       panelAgent,
       panelStatus,
       panelAnalysis,
+      agents,
       sendMessage,
       runAgent,
       submitGoal,

@@ -1,11 +1,48 @@
 export type AgentType = "chat" | "ui";
 
+export type AgentBackend = "mock" | "ariva" | "n8n";
+
 export interface AgentDef {
   slug: string;
   name: string;
   type: AgentType;
-  category: "HR" | "Productivity";
+  category: string;
   description: string;
+  /** Where the agent runs. Static agents are handled client-side ("mock"). */
+  backend: AgentBackend;
+}
+
+/**
+ * Unified shape for both static (code) and dynamic (DB / n8n) agents, as
+ * returned by GET /api/agents and held in app state. `editable` agents are
+ * workspace-managed n8n agents; static agents are read-only.
+ */
+export interface RegistryAgent {
+  id: string;
+  slug: string;
+  name: string;
+  description: string;
+  category: string;
+  type: AgentType;
+  backend: AgentBackend;
+  enabled: boolean;
+  editable: boolean;
+  webhookPath?: string;
+}
+
+/** Map the static AGENTS array into the unified registry shape. */
+export function staticRegistryAgents(): RegistryAgent[] {
+  return AGENTS.map((a) => ({
+    id: a.slug,
+    slug: a.slug,
+    name: a.name,
+    description: a.description,
+    category: a.category,
+    type: a.type,
+    backend: a.backend,
+    enabled: true,
+    editable: false,
+  }));
 }
 
 export interface ModelDef {
@@ -51,6 +88,7 @@ export const AGENTS: AgentDef[] = [
     type: "chat",
     category: "HR",
     description: "Turn rough objectives into clear, measurable, SMART goals.",
+    backend: "mock",
   },
   {
     slug: "language-intelligence",
@@ -59,6 +97,7 @@ export const AGENTS: AgentDef[] = [
     category: "Productivity",
     description:
       "Translate seamlessly between Arabic and English while preserving meaning and tone.",
+    backend: "mock",
   },
   {
     slug: "meeting-intelligence",
@@ -66,6 +105,7 @@ export const AGENTS: AgentDef[] = [
     type: "ui",
     category: "Productivity",
     description: "Turn meeting notes into clear actions, owners, and next steps.",
+    backend: "mock",
   },
   {
     slug: "qr-studio",
@@ -73,6 +113,7 @@ export const AGENTS: AgentDef[] = [
     type: "ui",
     category: "Productivity",
     description: "Generate high-quality QR codes from links or text in seconds.",
+    backend: "mock",
   },
 ];
 

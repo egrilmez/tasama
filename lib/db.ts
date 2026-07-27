@@ -47,6 +47,24 @@ function openDb() {
       role TEXT NOT NULL DEFAULT 'member',
       PRIMARY KEY (workspace_id, user_id)
     );
+    CREATE TABLE IF NOT EXISTS agents (
+      id TEXT PRIMARY KEY,
+      workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+      slug TEXT NOT NULL,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      category TEXT NOT NULL DEFAULT 'Productivity',
+      backend TEXT NOT NULL DEFAULT 'n8n',
+      webhook_path TEXT NOT NULL,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL,
+      UNIQUE(workspace_id, slug)
+    );
+    -- Marks workspaces whose starter agents have been seeded, so deleting a
+    -- seeded agent never causes it to be re-created.
+    CREATE TABLE IF NOT EXISTS workspace_agent_seed (
+      workspace_id TEXT PRIMARY KEY
+    );
   `);
   return db;
 }
@@ -138,6 +156,7 @@ export function createWorkspace(
   db.prepare(
     "INSERT INTO workspace_members (workspace_id, user_id, role) VALUES (?, ?, 'owner')"
   ).run(id, ownerId);
+  seedAgentsForWorkspace(id);
   return {
     id,
     name,
@@ -193,4 +212,192 @@ export function updateWorkspace(
     workspaceId
   );
   return true;
+}
+
+/* ---- agents (n8n-backed, per workspace) ---- */
+
+export interface AgentRow {
+  id: string;
+  workspace_id: string;
+  slug: string;
+  name: string;
+  description: string;
+  category: string;
+  backend: string;
+  webhook_path: string;
+  enabled: number;
+  created_at: number;
+}
+
+/** Starter soft-landing agents seeded into each new workspace. Placeholder
+ *  webhook paths — the owner points them at real n8n workflows. */
+const STARTER_AGENTS: ReadonlyArray<{
+  name: string;
+  description: string;
+  category: string;
+  webhookPath: string;
+}> = [
+  {
+    name: "Trade License Assistant",
+    description:
+      "Guide foreign companies through Saudi commercial registration (CR) and trade license applications step by step.",
+    category: "Company Setup",
+    webhookPath: "tasama-trade-license",
+  },
+  {
+    name: "Company Formation Guide",
+    description:
+      "Plan your MISA investment license and legal entity setup to establish operations in Saudi Arabia.",
+    category: "Company Setup",
+    webhookPath: "tasama-company-formation",
+  },
+  {
+    name: "Visa & Iqama Navigator",
+    description:
+      "Navigate work visas, iqama issuance, and GOSI/Qiwa employee registration for your new team.",
+    category: "Government",
+    webhookPath: "tasama-visa-iqama",
+  },
+  {
+    name: "PRO & Government Desk",
+    description:
+      "Handle Absher, Muqeem, and Qiwa portal tasks and government correspondence for your entity.",
+    category: "Government",
+    webhookPath: "tasama-gov-desk",
+  },
+];
+
+function slugify(name: string): string {
+  return name
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48);
+}
+
+/** Insert the starter agents for a workspace exactly once (idempotent). */
+export function seedAgentsForWorkspace(workspaceId: string): void {
+  const already = db
+    .prepare("SELECT 1 FROM workspace_agent_seed WHERE workspace_id = ?")
+    .get(workspaceId);
+  if (already) return;
+  const insert = db.prepare(
+    `INSERT OR IGNORE INTO agents
+       (id, workspace_id, slug, name, description, category, backend, webhook_path, enabled, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'n8n', ?, 1, ?)`
+  );
+  const seed = db.transaction(() => {
+    for (const a of STARTER_AGENTS) {
+      insert.run(
+        randomUUID(),
+        workspaceId,
+        slugify(a.name),
+        a.name,
+        a.description,
+        a.category,
+        a.webhookPath,
+        Date.now()
+      );
+    }
+    db.prepare(
+      "INSERT OR IGNORE INTO workspace_agent_seed (workspace_id) VALUES (?)"
+    ).run(workspaceId);
+  });
+  seed();
+}
+
+/** All agents for a workspace (enabled and disabled), newest first. */
+export function listAgents(workspaceId: string): AgentRow[] {
+  return db
+    .prepare(
+      "SELECT * FROM agents WHERE workspace_id = ? ORDER BY created_at ASC"
+    )
+    .all(workspaceId) as AgentRow[];
+}
+
+export function getAgent(id: string, workspaceId: string): AgentRow | undefined {
+  return db
+    .prepare("SELECT * FROM agents WHERE id = ? AND workspace_id = ?")
+    .get(id, workspaceId) as AgentRow | undefined;
+}
+
+export function createAgent(
+  workspaceId: string,
+  data: { name: string; description: string; category: string; webhookPath: string }
+): AgentRow {
+  const id = randomUUID();
+  // Ensure slug uniqueness within the workspace.
+  let slug = slugify(data.name) || "agent";
+  const exists = (s: string) =>
+    db
+      .prepare("SELECT 1 FROM agents WHERE workspace_id = ? AND slug = ?")
+      .get(workspaceId, s);
+  if (exists(slug)) slug = `${slug}-${id.slice(0, 6)}`;
+  const created_at = Date.now();
+  db.prepare(
+    `INSERT INTO agents
+       (id, workspace_id, slug, name, description, category, backend, webhook_path, enabled, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, 'n8n', ?, 1, ?)`
+  ).run(
+    id,
+    workspaceId,
+    slug,
+    data.name,
+    data.description,
+    data.category,
+    data.webhookPath,
+    created_at
+  );
+  return {
+    id,
+    workspace_id: workspaceId,
+    slug,
+    name: data.name,
+    description: data.description,
+    category: data.category,
+    backend: "n8n",
+    webhook_path: data.webhookPath,
+    enabled: 1,
+    created_at,
+  };
+}
+
+export function updateAgent(
+  id: string,
+  workspaceId: string,
+  patch: {
+    name?: string;
+    description?: string;
+    category?: string;
+    webhookPath?: string;
+    enabled?: boolean;
+  }
+): AgentRow | undefined {
+  const current = getAgent(id, workspaceId);
+  if (!current) return undefined;
+  db.prepare(
+    `UPDATE agents SET
+       name = COALESCE(?, name),
+       description = COALESCE(?, description),
+       category = COALESCE(?, category),
+       webhook_path = COALESCE(?, webhook_path),
+       enabled = COALESCE(?, enabled)
+     WHERE id = ? AND workspace_id = ?`
+  ).run(
+    patch.name ?? null,
+    patch.description ?? null,
+    patch.category ?? null,
+    patch.webhookPath ?? null,
+    patch.enabled === undefined ? null : patch.enabled ? 1 : 0,
+    id,
+    workspaceId
+  );
+  return getAgent(id, workspaceId);
+}
+
+export function deleteAgent(id: string, workspaceId: string): boolean {
+  const res = db
+    .prepare("DELETE FROM agents WHERE id = ? AND workspace_id = ?")
+    .run(id, workspaceId);
+  return res.changes > 0;
 }

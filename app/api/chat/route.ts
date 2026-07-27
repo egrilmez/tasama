@@ -1,5 +1,6 @@
 import { getSessionUser } from "@/lib/auth";
-import { getWorkspaceForUser } from "@/lib/db";
+import { getAgent, getWorkspaceForUser } from "@/lib/db";
+import { runN8nAgent } from "@/lib/n8n-client";
 
 export const runtime = "nodejs";
 
@@ -15,7 +16,7 @@ export const runtime = "nodejs";
  */
 export async function POST(req: Request) {
   const base = process.env.ARIVA_BASE_URL ?? "https://ariva.agenticdynamic.com";
-  const { message, conversationId, confirmToken, decision, workspaceId } =
+  const { message, conversationId, confirmToken, decision, workspaceId, agentId } =
     await req.json();
 
   let assistantId = process.env.ARIVA_ASSISTANT_ID;
@@ -30,6 +31,26 @@ export async function POST(req: Request) {
     if (!ws) {
       return Response.json({ error: "Workspace not found" }, { status: 404 });
     }
+
+    // Route to an n8n agent when one is selected for this workspace.
+    if (agentId) {
+      const agent = getAgent(agentId, workspaceId);
+      if (!agent || !agent.enabled) {
+        return Response.json(
+          { error: "Agent not found or disabled" },
+          { status: 404 }
+        );
+      }
+      if (agent.backend === "n8n") {
+        return runN8nAgent(agent.webhook_path, {
+          message,
+          conversationId,
+          workspaceId,
+          userId: user.id,
+        });
+      }
+    }
+
     if (ws.ariva_assistant_id && ws.ariva_api_key) {
       assistantId = ws.ariva_assistant_id;
       apiKey = ws.ariva_api_key;
