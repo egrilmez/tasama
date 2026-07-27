@@ -16,7 +16,7 @@ import {
   Bot,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { AGENTS, MODELS } from "@/lib/data";
+import { MODELS } from "@/lib/data";
 import { useApp } from "@/lib/store";
 
 function Toggle({
@@ -45,7 +45,7 @@ function Toggle({
 }
 
 function AgentsToolsPopover({ onClose }: { onClose: () => void }) {
-  const { kbEnabled, setKbEnabled, webEnabled, setWebEnabled, runAgent } =
+  const { kbEnabled, setKbEnabled, webEnabled, setWebEnabled, runAgent, agents } =
     useApp();
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -90,30 +90,32 @@ function AgentsToolsPopover({ onClose }: { onClose: () => void }) {
       <div className="px-3 pt-2 pb-1 text-[11px] font-bold tracking-wide text-muted uppercase">
         Agents
       </div>
-      {AGENTS.map((a) => (
-        <button
-          key={a.slug}
-          onClick={() => {
-            runAgent(a.slug);
-            onClose();
-          }}
-          className="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-panel text-left"
-        >
-          <span className="h-9 w-9 rounded-full bg-lavender grid place-items-center shrink-0">
-            {a.type === "chat" ? (
-              <Bot size={16} className="text-primary" />
-            ) : (
-              <Sparkles size={16} className="text-primary" />
-            )}
-          </span>
-          <div>
-            <div className="text-sm font-bold">{a.name}</div>
-            <div className="text-xs text-muted">
-              {a.type === "chat" ? "Chat agent" : "UI agent"}
+      {agents
+        .filter((a) => a.enabled)
+        .map((a) => (
+          <button
+            key={a.id}
+            onClick={() => {
+              runAgent(a.slug);
+              onClose();
+            }}
+            className="w-full flex items-center gap-3 p-2.5 rounded-xl hover:bg-panel text-left"
+          >
+            <span className="h-9 w-9 rounded-full bg-lavender grid place-items-center shrink-0">
+              {a.type === "chat" ? (
+                <Bot size={16} className="text-primary" />
+              ) : (
+                <Sparkles size={16} className="text-primary" />
+              )}
+            </span>
+            <div>
+              <div className="text-sm font-bold">{a.name}</div>
+              <div className="text-xs text-muted">
+                {a.type === "chat" ? "Chat agent" : "UI agent"}
+              </div>
             </div>
-          </div>
-        </button>
-      ))}
+          </button>
+        ))}
     </div>
   );
 }
@@ -182,90 +184,113 @@ export default function Composer({ hero = false }: { hero?: boolean }) {
         </p>
       )}
       <div
-        className={`bg-white rounded-2xl border border-line ${
+        className={`bg-white rounded-[22px] border border-line focus-within:border-primary/40 focus-within:shadow-lg focus-within:shadow-primary/10 transition-all ${
           hero ? "shadow-lg shadow-primary/5" : "shadow-md"
-        } px-4 pt-3 pb-3`}
+        }`}
       >
-        {hero && (
-          <div className="flex items-center gap-4 text-[11px] text-muted mb-1">
-            <span className="flex items-center gap-1">
-              <AtSign size={11} /> Type @ to mention a file
-            </span>
-            <span className="flex items-center gap-1">
-              <Paperclip size={11} /> Or use the paperclip to upload a new one
-            </span>
-          </div>
-        )}
-        <textarea
-          rows={1}
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              submit();
-            }
-          }}
-          placeholder="Ask anything..."
-          className="w-full resize-none outline-none text-[15px] placeholder:text-muted py-1"
-        />
-        <div className="flex items-center gap-2 mt-1.5">
-          {attached.map((f) => (
-            <span
-              key={f.id}
-              className="flex items-center gap-1.5 bg-lavender text-primary text-xs font-semibold rounded-lg border border-primary/20 px-2.5 py-1.5"
-            >
-              <FileText size={13} />
-              {f.name.length > 14 ? f.name.slice(0, 12) + "…" : f.name}
-              <button onClick={() => detachFile(f.id)}>
-                <X size={12} />
-              </button>
-            </span>
-          ))}
+        {/* input area */}
+        <div className="px-5 pt-4 pb-2">
+          {hero && (
+            <div className="flex items-center gap-4 text-[11px] text-muted mb-1.5">
+              <span className="flex items-center gap-1">
+                <AtSign size={11} /> Type @ to mention a file
+              </span>
+              <span className="flex items-center gap-1">
+                <Paperclip size={11} /> Or use the paperclip to upload a new one
+              </span>
+            </div>
+          )}
+          <textarea
+            rows={hero ? 2 : 1}
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                submit();
+              }
+            }}
+            placeholder="Ask anything..."
+            className="w-full resize-none outline-none text-[15px] placeholder:text-muted py-1"
+          />
+          {attached.length > 0 && (
+            <div className="flex items-center gap-2 flex-wrap mt-1">
+              {attached.map((f) => (
+                <span
+                  key={f.id}
+                  className="flex items-center gap-1.5 bg-lavender text-primary text-xs font-semibold rounded-lg px-2.5 py-1.5"
+                >
+                  <FileText size={13} />
+                  {f.name.length > 18 ? f.name.slice(0, 16) + "…" : f.name}
+                  <button onClick={() => detachFile(f.id)} aria-label="Remove file">
+                    <X size={12} />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* options toolbar — beneath the text input */}
+        <div className="flex items-center gap-1.5 border-t border-line px-3.5 py-2.5">
           <button
             onClick={() => setAttachModalOpen(true)}
-            className="h-8 w-8 grid place-items-center rounded-lg text-muted hover:bg-panel transition-colors"
+            className="h-9 w-9 grid place-items-center rounded-xl text-muted hover:bg-lavender hover:text-primary transition-colors"
             aria-label="Attach files"
+            title="Attach files"
           >
             <Paperclip size={16} />
           </button>
           <div className="relative">
             <button
               onClick={() => setToolsOpen((v) => !v)}
-              className="flex items-center gap-1.5 text-sm font-semibold border border-line rounded-full px-3 py-1.5 hover:bg-panel transition-colors"
+              className={`flex items-center gap-1.5 text-[13px] font-semibold rounded-xl px-3 py-2 transition-colors ${
+                toolsOpen
+                  ? "bg-lavender text-primary"
+                  : "text-muted hover:bg-lavender hover:text-primary"
+              }`}
             >
               <SlidersHorizontal size={14} /> Agents &amp; Tools
             </button>
             {toolsOpen && <AgentsToolsPopover onClose={() => setToolsOpen(false)} />}
           </div>
+          <div className="relative">
+            <button
+              onClick={() => setModelOpen((v) => !v)}
+              className={`flex items-center gap-1.5 text-[13px] font-semibold rounded-xl px-3 py-2 transition-colors ${
+                modelOpen
+                  ? "bg-lavender text-primary"
+                  : "text-muted hover:bg-lavender hover:text-primary"
+              }`}
+            >
+              {model.flag} {model.label} <ChevronDown size={13} />
+            </button>
+            {modelOpen && <ModelMenu onClose={() => setModelOpen(false)} />}
+          </div>
           {attached.length > 0 && kbEnabled && (
-            <span className="flex items-center gap-1.5 bg-lavender text-primary text-xs font-semibold rounded-full px-3 py-1.5">
+            <span className="flex items-center gap-1.5 bg-lavender text-primary text-xs font-semibold rounded-xl px-3 py-2">
               <BookOpen size={13} /> Knowledge Base
-              <button onClick={() => setKbEnabled(false)}>
+              <button onClick={() => setKbEnabled(false)} aria-label="Disable knowledge base">
                 <X size={12} />
               </button>
             </span>
           )}
-          <div className="relative">
+          <div className="ml-auto flex items-center gap-1.5">
             <button
-              onClick={() => setModelOpen((v) => !v)}
-              className="flex items-center gap-1.5 text-sm font-semibold border border-line rounded-full px-3 py-1.5 hover:bg-panel transition-colors"
+              className="h-9 w-9 grid place-items-center rounded-xl text-muted hover:bg-lavender hover:text-primary transition-colors"
+              aria-label="Help"
             >
-              {model.label} <ChevronDown size={13} />
+              <HelpCircle size={16} />
             </button>
-            {modelOpen && <ModelMenu onClose={() => setModelOpen(false)} />}
+            <button
+              onClick={submit}
+              disabled={!text.trim()}
+              className="h-10 w-10 rounded-full grad-primary text-white grid place-items-center hover:opacity-90 transition-all disabled:opacity-35 shadow-md shadow-primary/25"
+              aria-label="Send"
+            >
+              <ArrowUp size={17} />
+            </button>
           </div>
-          <button className="h-8 w-8 grid place-items-center rounded-lg text-muted hover:bg-panel transition-colors">
-            <HelpCircle size={16} />
-          </button>
-          <button
-            onClick={submit}
-            disabled={!text.trim()}
-            className="ml-auto h-9 w-9 rounded-full bg-primary text-white grid place-items-center hover:bg-primary-deep transition-colors disabled:opacity-40"
-            aria-label="Send"
-          >
-            <ArrowUp size={17} />
-          </button>
         </div>
       </div>
     </div>

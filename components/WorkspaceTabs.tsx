@@ -1,39 +1,39 @@
 "use client";
 
 import { MessageSquare, BarChart3, FolderOpen } from "lucide-react";
-import { useState } from "react";
-import { useApp } from "@/lib/store";
+import { useApp, type WorkspaceTab } from "@/lib/store";
 
-const TABS = [
+const TABS: { key: WorkspaceTab; label: string; icon: typeof MessageSquare }[] = [
   { key: "chats", label: "Chats", icon: MessageSquare },
   { key: "dashboard", label: "Dashboard", icon: BarChart3 },
   { key: "kb", label: "Knowledge Base", icon: FolderOpen },
-] as const;
+];
 
 export default function WorkspaceTabs() {
-  const [active, setActive] = useState<string>("chats");
-  const { workspaces, activeWorkspaceId } = useApp();
+  const { workspaces, activeWorkspaceId, activeTab, setActiveTab } = useApp();
   const wsName =
     workspaces.find((w) => w.id === activeWorkspaceId)?.name ?? "…";
   return (
-    <div className="h-[54px] shrink-0 flex items-center gap-2 px-5 border-b border-line bg-white">
-      <span className="text-sm font-bold mr-2 truncate max-w-[200px]">
+    <div className="h-[58px] shrink-0 flex items-center px-6 border-b border-line bg-white">
+      <span className="font-display font-semibold text-[15px] truncate max-w-[220px]">
         {wsName}
       </span>
-      {TABS.map(({ key, label, icon: Icon }) => (
-        <button
-          key={key}
-          onClick={() => setActive(key)}
-          className={`flex items-center gap-1.5 text-sm rounded-lg px-3 py-1.5 transition-colors ${
-            active === key
-              ? "bg-white border border-line shadow-sm font-semibold"
-              : "text-muted hover:bg-lavender"
-          }`}
-        >
-          <Icon size={15} />
-          {label}
-        </button>
-      ))}
+      <div className="ml-auto flex items-center gap-1 bg-panel border border-line rounded-2xl p-1">
+        {TABS.map(({ key, label, icon: Icon }) => (
+          <button
+            key={key}
+            onClick={() => setActiveTab(key)}
+            className={`flex items-center gap-1.5 text-[13px] rounded-xl px-3.5 py-1.5 transition-all ${
+              activeTab === key
+                ? "bg-white text-primary font-bold shadow-sm border border-line"
+                : "text-muted hover:text-ink"
+            }`}
+          >
+            <Icon size={14} />
+            {label}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
