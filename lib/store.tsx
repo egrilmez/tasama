@@ -54,11 +54,15 @@ export interface WorkspaceInfo {
 
 export type PanelStatus = "idle" | "running" | "done" | "stopped";
 
+export type WorkspaceTab = "chats" | "dashboard" | "kb";
+
 interface AppState {
   ready: boolean;
   user: UserInfo | null;
   workspaces: WorkspaceInfo[];
   activeWorkspaceId: string | null;
+  activeTab: WorkspaceTab;
+  setActiveTab: (t: WorkspaceTab) => void;
   chats: Chat[];
   activeChatId: string | null;
   files: FileDef[];
@@ -118,6 +122,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   const [workspaces, setWorkspaces] = useState<WorkspaceInfo[]>([]);
   const [activeWorkspaceId, setActiveWorkspaceId] = useState<string | null>(null);
   const [workspaceModalOpen, setWorkspaceModalOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<WorkspaceTab>("chats");
 
   const [chats, setChats] = useState<Chat[]>(DEFAULT_CHATS);
   const [activeChatId, setActiveChatId] = useState<string | null>(null);
@@ -174,6 +179,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     } catch {
       // corrupt state — start fresh
     }
+    // Legitimate hydration from localStorage during initialization
+    // eslint-disable-next-line react-hooks/exhaustive-deps, react-hooks/set-state-in-effect
     setChats(
       Array.isArray(s.chats)
         ? s.chats.map((c) => ({
@@ -529,6 +536,8 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       user,
       workspaces,
       activeWorkspaceId,
+      activeTab,
+      setActiveTab,
       chats,
       activeChatId,
       files,
@@ -592,6 +601,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       user,
       workspaces,
       activeWorkspaceId,
+      activeTab,
       chats,
       activeChatId,
       files,
