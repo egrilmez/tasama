@@ -4,7 +4,12 @@ import path from "path";
 import { randomUUID } from "crypto";
 
 function openDb() {
-  const dir = path.join(process.cwd(), "data");
+  // DATA_DIR lets the deployment place the SQLite file on durable storage
+  // outside the app root (e.g. Azure App Service's persistent /home/data,
+  // which survives restarts AND redeploys). Falls back to ./data locally.
+  const dir = process.env.DATA_DIR
+    ? process.env.DATA_DIR
+    : path.join(process.cwd(), "data");
   mkdirSync(dir, { recursive: true });
   const db = new Database(path.join(dir, "tasama.db"));
   db.pragma("journal_mode = WAL");
