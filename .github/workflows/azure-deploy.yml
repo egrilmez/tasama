@@ -48,21 +48,17 @@ jobs:
           cp next.config.ts deploy/
           cp -r data deploy/ || mkdir -p deploy/data
 
-          # Create startup script for Azure
+          # Create startup script for Azure.
+          # NOTE: do NOT rebuild better-sqlite3 here — the Azure Node runtime
+          # image has no build toolchain (no `make`). The CI runner already
+          # compiled the linux-x64 binary during `npm ci`, and Azure is the
+          # same platform, so the prebuilt binary loads as-is. The app creates
+          # its own data/ directory at runtime (lib/db.ts mkdirSync).
           cat > deploy/startup.sh << 'EOF'
           #!/bin/bash
           set -e
-
-          # Ensure data directory exists and is writable
-          mkdir -p /home/site/wwwroot/data
-          chmod 777 /home/site/wwwroot/data
-
-          # Rebuild better-sqlite3 for Linux
           cd /home/site/wwwroot
-          npm rebuild better-sqlite3
-
-          # Start Next.js
-          node_modules/.bin/next start -p 8080
+          exec node_modules/.bin/next start -p "${PORT:-8080}"
           EOF
 
           chmod +x deploy/startup.sh
@@ -115,12 +111,15 @@ jobs:
 
       - name: Health check
         run: |
-          echo "Waiting for app to start..."
-          sleep 30
-          response=$(curl -o /dev/null -s -w "%{http_code}\n" https://tasama-app.azurewebsites.net/)
-          if [ $response -eq 200 ] || [ $response -eq 503 ]; then
-            echo "✓ App is responding (HTTP $response)"
-          else
-            echo "✗ App health check failed (HTTP $response)"
-            exit 1
-          fi
+          echo "Waiting for app to warm up..."
+          for i in $(seq 1 12); do
+            response=$(curl -o /dev/null -s -w "%{http_code}" https://tasama-app.azurewebsites.net/ || echo 000)
+            echo "Attempt $i: HTTP $response"
+            if [ "$response" = "200" ] || [ "$response" = "302" ] || [ "$response" = "307" ]; then
+              echo "✓ App is healthy (HTTP $response)"
+              exit 0
+            fi
+            sleep 15
+          done
+          echo "✗ App did not become healthy in time (last HTTP $response)"
+          exit 1
