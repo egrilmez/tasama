@@ -54,11 +54,14 @@ jobs:
           # compiled the linux-x64 binary during `npm ci`, and Azure is the
           # same platform, so the prebuilt binary loads as-is. The app creates
           # its own data/ directory at runtime (lib/db.ts mkdirSync).
+          # Invoke Next.js via its REAL bin file, not the node_modules/.bin/next
+          # symlink — that symlink does not survive the zip deploy + Azure's
+          # node_modules relocation, causing "next: No such file or directory".
           cat > deploy/startup.sh << 'EOF'
           #!/bin/bash
           set -e
           cd /home/site/wwwroot
-          exec node_modules/.bin/next start -p "${PORT:-8080}"
+          exec node node_modules/next/dist/bin/next start -p "${PORT:-8080}"
           EOF
 
           chmod +x deploy/startup.sh
@@ -69,6 +72,11 @@ jobs:
           name: nextjs-app
           path: deploy/
           retention-days: 1
+          # CRITICAL: .next is a hidden (dot) directory. upload-artifact@v4
+          # excludes hidden files by default, which silently dropped the
+          # production build and caused "Could not find a production build
+          # in the '.next' directory" at startup.
+          include-hidden-files: true
 
   deploy:
     runs-on: ubuntu-latest
