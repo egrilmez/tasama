@@ -40,28 +40,27 @@ jobs:
       - name: Prepare deployment package
         run: |
           mkdir -p deploy
-          cp -r .next deploy/
-          cp -r public deploy/ || true
-          cp -r node_modules deploy/
-          cp package.json deploy/
-          cp package-lock.json deploy/
-          cp next.config.ts deploy/
-          cp -r data deploy/ || mkdir -p deploy/data
+          # Ship Next.js STANDALONE output: a traced minimal server + only the
+          # node_modules actually used (~a few MB) instead of the full ~191MB
+          # node_modules. This dramatically shrinks upload + startup time.
+          cp -r .next/standalone/. deploy/
+          # Static assets and public/ are NOT part of standalone by default —
+          # copy them to the paths the standalone server expects.
+          mkdir -p deploy/.next
+          cp -r .next/static deploy/.next/static
+          cp -r public deploy/public || true
 
-          # Create startup script for Azure.
-          # NOTE: do NOT rebuild better-sqlite3 here — the Azure Node runtime
-          # image has no build toolchain (no `make`). The CI runner already
-          # compiled the linux-x64 binary during `npm ci`, and Azure is the
-          # same platform, so the prebuilt binary loads as-is. The app creates
-          # its own data/ directory at runtime (lib/db.ts mkdirSync).
-          # Invoke Next.js via its REAL bin file, not the node_modules/.bin/next
-          # symlink — that symlink does not survive the zip deploy + Azure's
-          # node_modules relocation, causing "next: No such file or directory".
+          # Startup: run the standalone server directly. It reads PORT/HOSTNAME
+          # from env. better-sqlite3 is traced into deploy/node_modules with its
+          # prebuilt linux-x64 binary, so no rebuild is needed (the Azure runtime
+          # has no build toolchain anyway). DB path comes from DATA_DIR.
           cat > deploy/startup.sh << 'EOF'
           #!/bin/bash
           set -e
           cd /home/site/wwwroot
-          exec node node_modules/next/dist/bin/next start -p "${PORT:-8080}"
+          export HOSTNAME=0.0.0.0
+          export PORT="${PORT:-8080}"
+          exec node server.js
           EOF
 
           chmod +x deploy/startup.sh
