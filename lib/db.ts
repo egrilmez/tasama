@@ -12,6 +12,12 @@ function openDb() {
     : path.join(process.cwd(), "data");
   mkdirSync(dir, { recursive: true });
   const db = new Database(path.join(dir, "tasama.db"));
+  // Wait (up to 5s) for a lock to clear instead of throwing "database is
+  // locked" immediately. Next.js build imports all API routes in parallel
+  // workers, each opening this DB and running the CREATE TABLE writes below,
+  // which race on the file; busy_timeout serializes them safely. Also makes
+  // the app resilient to concurrent request writes at runtime.
+  db.pragma("busy_timeout = 5000");
   db.pragma("journal_mode = WAL");
   db.exec(`
     CREATE TABLE IF NOT EXISTS users (
